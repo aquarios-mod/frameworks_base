@@ -4765,7 +4765,6 @@ public final class Settings {
         public static final String LOCKSCREEN_INFO = "lockscreen_info";
 
         /**
-<<<<<<< HEAD
          * Clean notification by shake
          * @hide
          */
@@ -4779,7 +4778,6 @@ public final class Settings {
         public static final String SHAKE_CLEAN_RECENT = "shake_clean_recent";
 
        /**
-=======
          * If On-The-Go should be displayed at the power menu.
          *
          * @hide
@@ -4822,7 +4820,6 @@ public final class Settings {
               new SettingsValidators.InclusiveIntegerRangeValidator(0, 1);
 
         /**
->>>>>>> 383796fa165e95e0a1dc83250d83739049b5997c
          * Settings to backup. This is here so that it's in the same place as the settings
          * keys and easy to update.
          *
