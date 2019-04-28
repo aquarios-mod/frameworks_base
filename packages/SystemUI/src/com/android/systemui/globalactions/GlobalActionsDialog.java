@@ -22,14 +22,13 @@ import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STR
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN;
 
 import android.app.ActivityManager;
-import android.app.ActivityManagerNative;
 import android.app.Dialog;
-import android.app.IActivityManager;
 import android.app.KeyguardManager;
 import android.app.WallpaperManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.trust.TrustManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -87,6 +86,7 @@ import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.util.EmergencyAffordanceManager;
 import com.android.internal.util.ScreenshotHelper;
+import com.android.internal.util.aquarios.AquaUtils;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.systemui.Dependency;
 import com.android.systemui.HardwareUiLayout;
@@ -99,6 +99,8 @@ import com.android.systemui.volume.SystemUIInterpolators.LogAccelerateInterpolat
 
 import java.util.ArrayList;
 import java.util.List;
+
+import com.android.internal.util.aquarios.OnTheGoActions;
 
 /**
  * Helper to show the global actions dialog.  Each item is an {@link Action} that
@@ -133,6 +135,7 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
     private static final String GLOBAL_ACTION_KEY_EMERGENCY = "emergency";
     private static final String GLOBAL_ACTION_KEY_SCREENSHOT = "screenshot";
     private static final String GLOBAL_ACTION_KEY_ADVANCED = "advanced";
+    private static final String GLOBAL_ACTION_KEY_ONTHEGO = "onthego";
 
     private static final int SHOW_TOGGLES_BUTTON = 1;
     private static final int RESTART_HOT_BUTTON = 2;
@@ -443,7 +446,7 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
             } else if (GLOBAL_ACTION_KEY_LOCKDOWN.equals(actionKey)) {
                 if (Settings.Secure.getIntForUser(mContext.getContentResolver(),
                             Settings.Secure.LOCKDOWN_IN_POWER_MENU, 0, getCurrentUser().id) != 0
-                        && shouldDisplayLockdown()) {
+                        && shouldDisplayLockdown() && !AquaUtils.isInLockTaskMode()) {
                     mItems.add(getLockdownAction());
                     mHasLockdownButton = true;
                 }
@@ -458,7 +461,8 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
                 }
             } else if (GLOBAL_ACTION_KEY_SCREENSHOT.equals(actionKey)) {
                 if (Settings.Secure.getIntForUser(mContext.getContentResolver(),
-                            Settings.Secure.SCREENSHOT_IN_POWER_MENU, 0, getCurrentUser().id) != 0) {
+                            Settings.Secure.SCREENSHOT_IN_POWER_MENU, 0, getCurrentUser().id) != 0
+                        && !AquaUtils.isInLockTaskMode()) {
                     mItems.add(new ScreenshotAction());
                 }
             /*} else if (GLOBAL_ACTION_KEY_LOGOUT.equals(actionKey)) {
@@ -470,13 +474,18 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
             } else if (GLOBAL_ACTION_KEY_ADVANCED.equals(actionKey)) {
                 if (Settings.Secure.getIntForUser(mContext.getContentResolver(),
                             Settings.Secure.ADVANCED_REBOOT_IN_POWER_MENU, 1,
-                            getCurrentUser().id) != 0) {
+                            getCurrentUser().id) != 0 && !AquaUtils.isInLockTaskMode()) {
                     mItems.add(mShowAdvancedToggles);
                 }
             } else if (GLOBAL_ACTION_KEY_EMERGENCY.equals(actionKey)) {
                 if (mSeparatedEmergencyButtonEnabled
                         && !mEmergencyAffordanceManager.needsEmergencyAffordance()) {
                     mItems.add(new EmergencyDialerAction());
+                }
+            } else if (GLOBAL_ACTION_KEY_ONTHEGO.equals(actionKey)) {
+                if (Settings.System.getIntForUser(mContext.getContentResolver(),
+                        Settings.System.GLOBAL_ACTIONS_ONTHEGO, 0, getCurrentUser().id) == 1) {
+                    mItems.add(getOnTheGoAction());
                 }
             } else {
                 Log.e(TAG, "Invalid global action key " + actionKey);
@@ -645,6 +654,28 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
         public boolean showBeforeProvisioning() {
             return false;
         }
+    }
+
+    private Action getOnTheGoAction() {
+        return new SinglePressAction(com.android.internal.R.drawable.ic_lock_onthego,
+                R.string.global_action_onthego) {
+
+            @Override
+            public void onPress() {
+                OnTheGoActions.processAction(mContext,
+                        OnTheGoActions.ACTION_ONTHEGO_TOGGLE);
+            }
+
+            @Override
+            public boolean showDuringKeyguard() {
+                return true;
+            }
+
+            @Override
+            public boolean showBeforeProvisioning() {
+                return true;
+            }
+        };
     }
 
     private class BugReportAction extends SinglePressAction implements LongPressAction {
@@ -928,6 +959,15 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
                 }
             }
         }
+    }
+
+    private void startOnTheGo() {
+        final ComponentName cn = new ComponentName("com.android.systemui",
+                "com.android.systemui.aquarios.onthego.OnTheGoService");
+        final Intent startIntent = new Intent();
+        startIntent.setComponent(cn);
+        startIntent.setAction("start");
+        mContext.startService(startIntent);
     }
 
     private void prepareDialog() {
@@ -1392,7 +1432,7 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
         switch (type) {
             case RESTART_HOT_BUTTON:
                 h.sendEmptyMessage(MESSAGE_DISMISS);
-                doHotReboot();
+                AquaUtils.doHotReboot();
                 break;
             case RESTART_RECOVERY_BUTTON:
                 h.sendEmptyMessage(MESSAGE_DISMISS);
@@ -1408,7 +1448,7 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
                 won't show the LegacyGlobalActions after systemui restart
                 */
                 funcs.onGlobalActionsHidden();
-                restartSystemUI(ctx);
+                Process.killProcess(Process.myPid());
                 break;
             default:
                 break;
@@ -1821,22 +1861,6 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener,
 
         public void setKeyguardShowing(boolean keyguardShowing) {
             mKeyguardShowing = keyguardShowing;
-        }
-    }
-
-    public static void restartSystemUI(Context ctx) {
-        Process.killProcess(Process.myPid());
-    }
-
-    private static void doHotReboot() {
-        try {
-            final IActivityManager am =
-                  ActivityManagerNative.asInterface(ServiceManager.checkService("activity"));
-            if (am != null) {
-                am.restart();
-            }
-        } catch (RemoteException e) {
-            Log.e(TAG, "failure trying to perform hot reboot", e);
         }
     }
 }

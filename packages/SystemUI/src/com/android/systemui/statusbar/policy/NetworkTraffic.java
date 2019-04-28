@@ -11,11 +11,9 @@ import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.drawable.Drawable;
 import android.graphics.PorterDuff.Mode;
-import android.graphics.Rect;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.TrafficStats;
-import android.net.Uri;
 import android.os.Handler;
 import android.os.UserHandle;
 import android.os.Message;
@@ -54,9 +52,10 @@ public class NetworkTraffic extends TextView {
     private long lastUpdateTime;
     private int txtSize;
     private int txtImgPadding;
+    private boolean mHideArrow;
     private int mAutoHideThreshold;
     private int mTintColor;
-
+    private boolean mTrafficInHeaderView;
     private boolean mScreenOn = true;
 
     private Handler mTrafficHandler = new Handler() {
@@ -87,18 +86,19 @@ public class NetworkTraffic extends TextView {
                 setVisibility(View.GONE);
             } else {
                 // Get information for uplink ready so the line return can be added
-                String output = "UL: " + formatOutput(timeDelta, txData, symbol);
+                String output = formatOutput(timeDelta, txData, symbol);
                 // Ensure text size is where it needs to be
                 output += "\n";
                 // Add information for downlink if it's called for
-                output +=  "DL: " + formatOutput(timeDelta, rxData, symbol);
+                output += formatOutput(timeDelta, rxData, symbol);
 
                 // Update view if there's anything new to show
                 if (!output.contentEquals(getText())) {
                     setTextSize(TypedValue.COMPLEX_UNIT_PX, (float)txtSize);
                     setText(output);
                 }
-                setVisibility(View.VISIBLE);
+                setVisibility(
+                mTrafficInHeaderView ? View.GONE : View.VISIBLE);
             }
 
             // Post delayed message to refresh in ~1000ms
@@ -149,7 +149,13 @@ public class NetworkTraffic extends TextView {
             resolver.registerContentObserver(Settings.System
                     .getUriFor(Settings.System.NETWORK_TRAFFIC_AUTOHIDE_THRESHOLD), false,
                     this, UserHandle.USER_ALL);
-        }
+            resolver.registerContentObserver(Settings.System
+                    .getUriFor(Settings.System.NETWORK_TRAFFIC_HIDEARROW), false,
+                    this, UserHandle.USER_ALL);
+            resolver.registerContentObserver(Settings.System
+                    .getUriFor(Settings.System.NETWORK_TRAFFIC_VIEW_LOCATION), false,
+                    this, UserHandle.USER_ALL); 
+       }
 
         /*
          *  @hide
@@ -240,16 +246,18 @@ public class NetworkTraffic extends TextView {
     }
 
     private void updateSettings() {
+        final ContentResolver resolver = getContext().getContentResolver();
+
+        mTrafficInHeaderView = Settings.System.getIntForUser(resolver,
+                Settings.System.NETWORK_TRAFFIC_VIEW_LOCATION, 1, UserHandle.USER_CURRENT) == 0;
         if (mIsEnabled) {
-            if (getConnectAvailable()) {
-                if (mAttached) {
-                    totalRxBytes = TrafficStats.getTotalRxBytes();
-                    lastUpdateTime = SystemClock.elapsedRealtime();
-                    mTrafficHandler.sendEmptyMessage(1);
-                }
-                updateTrafficDrawable();
-                return;
+            if (mAttached) {
+                totalRxBytes = TrafficStats.getTotalRxBytes();
+                lastUpdateTime = SystemClock.elapsedRealtime();
+                mTrafficHandler.sendEmptyMessage(1);
             }
+            updateTrafficDrawable();
+            return;
         } else {
             clearHandlerCallbacks();
         }
@@ -264,6 +272,9 @@ public class NetworkTraffic extends TextView {
         mAutoHideThreshold = Settings.System.getIntForUser(resolver,
                 Settings.System.NETWORK_TRAFFIC_AUTOHIDE_THRESHOLD, 1,
                 UserHandle.USER_CURRENT);
+        mHideArrow = Settings.System.getIntForUser(resolver,
+                Settings.System.NETWORK_TRAFFIC_HIDEARROW, 0,
+                UserHandle.USER_CURRENT) == 1;
     }
 
     private void clearHandlerCallbacks() {
@@ -274,12 +285,12 @@ public class NetworkTraffic extends TextView {
 
     private void updateTrafficDrawable() {
         int intTrafficDrawable;
-        if (mIsEnabled) {
+        if (mIsEnabled && !mHideArrow) {
             intTrafficDrawable = R.drawable.stat_sys_network_traffic_updown;
         } else {
             intTrafficDrawable = 0;
         }
-        if (intTrafficDrawable != 0) {
+        if (intTrafficDrawable != 0 && !mHideArrow) {
             Drawable d = getContext().getDrawable(intTrafficDrawable);
             d.setColorFilter(mTintColor, Mode.MULTIPLY);
             setCompoundDrawablePadding(txtImgPadding);

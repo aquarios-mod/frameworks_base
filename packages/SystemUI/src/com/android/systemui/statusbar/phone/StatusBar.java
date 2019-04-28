@@ -1035,6 +1035,9 @@ public class StatusBar extends SystemUI implements DemoMode, TunerService.Tunabl
         mGroupManager.setHeadsUpManager(mHeadsUpManager);
         putComponent(HeadsUpManager.class, mHeadsUpManager);
 
+        // everything should be inflated and initialized by this time
+        onUpdateThemedResources(mOverlayManager, isUsingDarkTheme() || isUsingBlackTheme());
+
         mEntryManager.setUpWithPresenter(this, mStackScroller, this, mHeadsUpManager);
         mViewHierarchyManager.setUpWithPresenter(this, mEntryManager, mStackScroller);
 
@@ -2371,6 +2374,11 @@ public class StatusBar extends SystemUI implements DemoMode, TunerService.Tunabl
          return ThemeAccentUtils.isUsingBlackTheme(mOverlayManager, mLockscreenUserManager.getCurrentUserId());
     }
 
+    // Check for black and white accent overlays
+    public void unfuckBlackWhiteAccent() {
+        ThemeAccentUtils.unfuckBlackWhiteAccent(mOverlayManager, mLockscreenUserManager.getCurrentUserId());
+    }
+
     @Nullable
     public View getAmbientIndicationContainer() {
         return mAmbientIndicationContainer;
@@ -3591,6 +3599,15 @@ public class StatusBar extends SystemUI implements DemoMode, TunerService.Tunabl
 
         mViewHierarchyManager.updateRowStates();
         mScreenPinningRequest.onConfigurationChanged();
+        onUpdateThemedResources(mOverlayManager, isUsingDarkTheme() || isUsingBlackTheme());
+    }
+
+    /**
+     * Hook into this method to manually update any resources that don't automatically update when a
+     * theme change occurs, i.e. Keyguard
+     */
+    protected void onUpdateThemedResources(IOverlayManager om, boolean isDarkTheme) {
+        mNotificationPanel.onUpdateThemedResources(om, isDarkTheme);
     }
 
     @Override
@@ -4355,24 +4372,21 @@ public class StatusBar extends SystemUI implements DemoMode, TunerService.Tunabl
         }
         if (isUsingDarkTheme() == false && isUsingBlackTheme() == false) {
             mUiOffloadThread.submit(() -> {
+            unfuckBlackWhiteAccent();
             umm.setNightMode(UiModeManager.MODE_NIGHT_NO);
             });
         }
         if (themeNeedsRefresh || isUsingDarkTheme() != useDarkTheme) {
             final boolean useDark = useDarkTheme;
-            unloadAccents();
             mUiOffloadThread.submit(() -> {
             ThemeAccentUtils.setLightDarkTheme(mOverlayManager, mLockscreenUserManager.getCurrentUserId(), useDark);
-            mNotificationPanel.setLockscreenClockTheme(useDark);
             umm.setNightMode(UiModeManager.MODE_NIGHT_YES);
             });
         }
         if (themeNeedsRefresh || isUsingBlackTheme() != useBlackTheme) {
             final boolean useBlack = useBlackTheme;
-            unloadAccents();
             mUiOffloadThread.submit(() -> {
             ThemeAccentUtils.setLightBlackTheme(mOverlayManager, mLockscreenUserManager.getCurrentUserId(), useBlack);
-            mNotificationPanel.setLockscreenClockTheme(useBlack);
             umm.setNightMode(UiModeManager.MODE_NIGHT_YES);
             });
         }
@@ -4443,6 +4457,12 @@ public class StatusBar extends SystemUI implements DemoMode, TunerService.Tunabl
         mNotificationPanel.setDozing(mDozing, animate);
         mVisualizerView.setDozing(mDozing);
         updateQsExpansionEnabled();
+
+        if (isAmbientContainerAvailable()) {
+            ((AmbientIndicationContainer)mAmbientIndicationContainer)
+                    .updateDozingState(mDozing);
+        }
+
         Trace.endSection();
     }
 
@@ -5665,15 +5685,14 @@ public class StatusBar extends SystemUI implements DemoMode, TunerService.Tunabl
                 Settings.System.FORCE_AMBIENT_FOR_MEDIA, 1,
                 UserHandle.USER_CURRENT) != 0;
         if (isAmbientContainerAvailable()) {
-            ((AmbientIndicationContainer)mAmbientIndicationContainer).setIndication(
-                    mMediaManager.getMediaMetadata(), null, false);
+            ((AmbientIndicationContainer)mAmbientIndicationContainer).setIndication(null, false);
         }
     }
 
-    public void setAmbientMusicInfo(MediaMetadata mediaMetadata, String notificationText, boolean nowPlaying) {
+    public void setAmbientMusicInfo(String notificationText, boolean nowPlaying) {
         if (isAmbientContainerAvailable()) {
             ((AmbientIndicationContainer)mAmbientIndicationContainer).setIndication(
-                    mediaMetadata, notificationText, nowPlaying);
+                    notificationText, nowPlaying);
         }
     }
 
@@ -5769,16 +5788,20 @@ public class StatusBar extends SystemUI implements DemoMode, TunerService.Tunabl
         public void onChange(boolean selfChange, Uri uri) {
             if (uri.equals(Settings.System.getUriFor(
                     Settings.System.ACCENT_PICKER))) {
-                unloadAccents(); // Unload the accents when users request it
-                updateAccents(); // Update the accents when users request it
+                mUiOffloadThread.submit(() -> {
+                    unloadAccents(); // Unload the accents when users request it
+                    updateAccents(); // Update the accents when users request it
+                });
             } else if (uri.equals(Settings.System.getUriFor(
                     Settings.System.SYSTEM_THEME_STYLE))) {
                 getCurrentThemeSetting();
                 updateTheme(false);
             } else if (uri.equals(Settings.System.getUriFor(
                     Settings.System.QS_TILE_STYLE))) {
-                unlockQsTileStyles();
-                updateTileStyle();
+                mUiOffloadThread.submit(() -> {
+                    unlockQsTileStyles();
+                    updateTileStyle();
+                });
             } else if (uri.equals(Settings.Secure.getUriFor(
                     Settings.Secure.FP_SWIPE_TO_DISMISS_NOTIFICATIONS))) {
                 setFpToDismissNotifications();
